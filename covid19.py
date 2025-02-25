@@ -279,68 +279,63 @@ time_series_data = pd.Series(cases, index=labels)
 st.subheader("Time Series Analysis (Case Progression)")
 st.line_chart(time_series_data)
 
-# Data COVID-19 per provinsi secara manual
-data = {
-    "Province": [
-        "ACEH", "BALI", "BANTEN", "BENGKULU", "D.I. YOGYAKARTA", "DKI JAKARTA", "GORONTALO", "JAMBI", "JAWA BARAT", "JAWA TENGAH",
-        "JAWA TIMUR", "KALIMANTAN BARAT", "KALIMANTAN SELATAN", "KALIMANTAN TENGAH", "KALIMANTAN TIMUR", "KALIMANTAN UTARA",
-        "KEPULAUAN BANGKA BELITUNG", "KEPULAUAN RIAU", "LAMPUNG", "MALUKU", "MALUKU UTARA", "NUSA TENGGARA BARAT", "NUSA TENGGARA TIMUR",
-        "PAPUA", "PAPUA BARAT", "RIAU", "SULAWESI BARAT", "SULAWESI SELATAN", "SULAWESI TENGAH", "SULAWESI TENGGARA", "SULAWESI UTARA",
-        "SUMATERA BARAT", "SUMATERA SELATAN", "SUMATERA UTARA"
-    ],
-    "Confirmed_21_June": [
-        45091, 173753, 372214, 29961, 232389, 1568040, 14085, 39646, 1251718, 662318,
-        648240, 68038, 89353, 59806, 215537, 46430, 67440, 72204, 79194, 19003,
-        14986, 37442, 97914, 51415, 33189, 155319, 16155, 149271, 63601, 26750, 54603,
-        105839, 86122, 164378
-    ],
-    "Recovered_21_June": [
-        42767, 168700, 368854, 29427, 225955, 1551523, 13465, 38699, 1232023, 626757,
-        614323, 66869, 86673, 58166, 209647, 45510, 65773, 70196, 74619, 18682,
-        14628, 36458, 96095, 50810, 32791, 150648, 15724, 146662, 61761, 26153, 53249,
-        103314, 82576, 160719
-    ],
-    "Deaths_21_June": [
-        2282, 4908, 2994, 529, 6127, 16098, 486, 925, 16189, 34289,
-        32508, 1146, 2612, 1563, 5824, 880, 1657, 1930, 4264, 307,
-        336, 945, 1574, 581, 396, 4560, 411, 2587, 1760, 591, 1265,
-        2433, 3500, 3396
-    ]
-}
+# Load dataset
+file_path = "covid_19_indonesia_time_series_all.csv"
 
-# Konversi ke DataFrame
-df = pd.DataFrame(data)
+try:
+    df = pd.read_csv(file_path)
 
-# Tampilkan DataFrame
-st.write("## 📌 COVID-19 Data Province last updatting")
-st.dataframe(df)
+    # Filter hanya provinsi di Indonesia
+    df_provinces = df[(df["Location"] != "Indonesia") & (df["Location ISO Code"].str.startswith("ID-"))]
 
-# Hitung Recovery & Death Rate
-df["Recovery Rate"] = (df["Recovered_21_June"] / df["Confirmed_21_June"]) * 100
-df["Death Rate"] = (df["Deaths_21_June"] / df["Confirmed_21_June"]) * 100
+    # Ambil data terbaru berdasarkan tanggal terakhir yang tersedia
+    latest_date = df_provinces["Date"].max()
+    df_latest = df_provinces[df_provinces["Date"] == latest_date]
 
-st.write("## 🔬 Recovery & Death Rates")
-st.dataframe(df[["Province", "Recovery Rate", "Death Rate"]])
+    # Pilih kolom yang relevan
+    df_latest = df_latest[["Location", "Total Cases", "Total Recovered", "Total Deaths"]]
 
-# Visualisasi Data
-st.write("## 📊 Data Visualizations")
+    df_latest.rename(columns={
+        "Location": "Province",
+        "Total Cases": "Confirmed",
+        "Total Recovered": "Recovered",
+        "Total Deaths": "Deaths"
+    }, inplace=True)
 
-# 📊 Bar Chart
-fig = px.bar(df, x="Province", y="Confirmed_21_June", title="Confirmed Cases per Province", color="Confirmed_21_June")
-st.plotly_chart(fig)
+    # Hitung Recovery & Death Rate
+    df_latest["Recovery Rate"] = (df_latest["Recovered"] / df_latest["Confirmed"]) * 100
+    df_latest["Death Rate"] = (df_latest["Deaths"] / df_latest["Confirmed"]) * 100
 
-# 🥧 Pie Chart
-fig = px.pie(df, values="Confirmed_21_June", names="Province", title="Proportion of Cases per Province")
-st.plotly_chart(fig)
+    # Tampilkan DataFrame
+    st.write("## 📌 COVID-19 Data per Province (Latest Update)")
+    st.dataframe(df_latest)
 
-# 📈 Line Chart
-fig = px.line(df, x="Province", y="Confirmed_21_June", title="COVID-19 Trend by Province")
-st.plotly_chart(fig)
+    # Tampilkan Recovery & Death Rate
+    st.write("## 🔬 Recovery & Death Rates")
+    st.dataframe(df_latest[["Province", "Recovery Rate", "Death Rate"]])
 
-# 📉 Boxplot
-fig = px.box(df, y="Confirmed_21_June", title="Distribution of COVID-19 Cases")
-st.plotly_chart(fig)
+    # Visualisasi Data
+    st.write("## 📊 Data Visualizations")
 
-# Statistik Ringkasan
-st.write("## 📊 Summary Statistics")
-st.write(df.describe())
+    # 📊 Bar Chart
+    fig = px.bar(df_latest, x="Province", y="Confirmed", title="Confirmed Cases per Province", color="Confirmed")
+    st.plotly_chart(fig)
+
+    # 🥧 Pie Chart
+    fig = px.pie(df_latest, values="Confirmed", names="Province", title="Proportion of Cases per Province")
+    st.plotly_chart(fig)
+
+    # 📈 Line Chart
+    fig = px.line(df_latest, x="Province", y="Confirmed", title="COVID-19 Trend by Province")
+    st.plotly_chart(fig)
+
+    # 📉 Boxplot
+    fig = px.box(df_latest, y="Confirmed", title="Distribution of COVID-19 Cases")
+    st.plotly_chart(fig)
+
+    # Statistik Ringkasan
+    st.write("## 📊 Summary Statistics")
+    st.write(df_latest.describe())
+
+except FileNotFoundError:
+    st.error("File tidak ditemukan. Pastikan file 'covid_19_indonesia_time_series_all.csv' tersedia di lokasi yang benar.")
