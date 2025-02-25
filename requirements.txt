@@ -1,0 +1,9 @@
+requests
+numpy
+pandas
+matplotlib
+streamlit
+datetime
+plotly
+streamlit-autorefresh
+beautifulsoup4
