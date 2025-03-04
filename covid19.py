@@ -1,36 +1,35 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
 import requests
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import streamlit as st
 import datetime
-import plotly.express as px
+import matplotlib.pyplot as plt
 from streamlit_autorefresh import st_autorefresh
 from bs4 import BeautifulSoup
 
-
-# 1️⃣ Auto-refresh every 5 minutes (300000 ms)
-# Auto-refresh feature to ensure that the app shows the most recent data every 5 minutes.
+# ⏰ Auto-refresh every 5 minutes (300000 ms)
 st_autorefresh(interval=300000, key="auto_refresh")
 
-# 2️⃣ App Title
-# Displaying the app's title on the main page to give users context about the topic.
+# 🎯 Application Title
 st.title("📊 COVID-19 Data Analysis in Indonesia")
 
-# 3️⃣ URL for Data Retrieval
-# URL to scrape data from the official Ministry of Health Indonesia website that provides the latest COVID-19 information.
+# URL source and fallback data
 web_scrape_url = 'https://pusatkrisis.kemkes.go.id/covid-19-id/'
 
-# 4️⃣ Backup Data
-# Backup data used if the primary data retrieval fails (as of June 21, 2023).
-fallback_cases = [6811444, 6640216, 161853, 0]  # Data as of June 21, 2023
+# UPDATED fallback_cases (manually computed Active Cases):
+#  - Confirmed: 6,811,444
+#  - Recovered: 6,640,216
+#  - Deaths:    161,853
+#  - Active = Confirmed - (Recovered + Deaths) = 6,811,444 - (6,640,216 + 161,853) = 9,375
+fallback_cases = [6811444, 6640216, 161853, 9375]
+
 fallback_global = 676681574
 fallback_suspect = 1080
 fallback_specimen = 13678
 labels = ['Confirmed', 'Recovered', 'Deaths', 'Active Cases']
 
-# 5️⃣ Initialize Data Status
-# Saving data in session_state to ensure it remains available throughout the user session.
+# Initialize data in session_state
 if "cases" not in st.session_state:
     st.session_state.cases = fallback_cases
 if "global_cases" not in st.session_state:
@@ -44,298 +43,239 @@ if "api_status" not in st.session_state:
 if "last_update" not in st.session_state:
     st.session_state.last_update = datetime.datetime.min
 
-# 6️⃣ Function to Fetch Latest Data
-# Function to retrieve the latest data from the Ministry of Health website and update information in session_state.
 def fetch_latest_data():
+    """
+    Fetches the latest COVID-19 data from the Ministry of Health website.
+    If data retrieval fails or data is incomplete, fallback data is used.
+    """
     try:
         response = requests.get(web_scrape_url, timeout=20)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Extract integer values from the HTML
         numbers = [int(num.text.replace('.', '').replace(',', '')) for num in soup.select('.covid-case strong')]
 
-        if len(numbers) >= 4:
-            st.session_state.cases = numbers[:4]
-            st.session_state.global_cases = numbers[0]
-            st.session_state.suspect = numbers[4] if len(numbers) > 4 else fallback_suspect
-            st.session_state.specimen = numbers[5] if len(numbers) > 5 else fallback_specimen
+        # If at least 3 numbers (Confirmed, Recovered, Deaths) are found:
+        if len(numbers) >= 3:
+            # Assign Confirmed, Recovered, Deaths
+            st.session_state.cases[0] = numbers[0]
+            st.session_state.cases[1] = numbers[1]
+            st.session_state.cases[2] = numbers[2]
+
+            # If the website also provides Active Cases as the 4th value, use it:
+            if len(numbers) >= 4:
+                st.session_state.cases[3] = numbers[3]
+            else:
+                # Otherwise, compute Active Cases manually
+                st.session_state.cases[3] = (
+                    st.session_state.cases[0] 
+                    - (st.session_state.cases[1] + st.session_state.cases[2])
+                )
+
+            # Update global, suspect, and specimen if provided
+            st.session_state.global_cases = numbers[0]  # If the site uses the 1st number as global
+            if len(numbers) > 4:
+                st.session_state.suspect = numbers[4]
+            if len(numbers) > 5:
+                st.session_state.specimen = numbers[5]
+
             st.session_state.api_status = "✅ Latest Data from Ministry of Health"
             st.session_state.last_update = datetime.datetime.now()
         else:
-            raise ValueError("Data retrieved is incomplete.")
-    except Exception as e:
-        # If data retrieval fails, use backup data.
+            raise ValueError("Incomplete data retrieved.")
+
+    except Exception:
+        # If anything goes wrong, revert to fallback
         st.session_state.cases = fallback_cases
         st.session_state.global_cases = fallback_global
         st.session_state.suspect = fallback_suspect
         st.session_state.specimen = fallback_specimen
+        st.session_state.api_status = "❌ Using Fallback Data"
 
-# 7️⃣ Fetch Data When Page Loads
-# Ensures that the latest data is fetched whenever the page is loaded or refreshed.
+# Fetch data on page load
 fetch_latest_data()
-
 cases = st.session_state.cases
-st.session_state.last_updated = st.session_state.last_update.strftime('%Y-%m-%d %H:%M:%S')
+last_updated = st.session_state.last_update.strftime('%Y-%m-%d %H:%M:%S')
 
-# 8️⃣ Display Data Status in Sidebar
-# Displaying the status of the data and the time it was last updated in the sidebar.
-st.sidebar.subheader("📱 Data Status")
-st.sidebar.write(st.session_state.api_status)
+# ------------------ SIDEBAR ------------------ #
+with st.sidebar:
+    st.subheader("📱 Data Status")
+    st.write(st.session_state.api_status)
+    st.write(f"**Last Updated:** {last_updated}")
+    st.write(f"🌎 **Global Cases:** {st.session_state.global_cases:,}")
 
-# 🔟 Display Statistical Features
-# Displaying statistics and visualizations for COVID-19 data.
-st.subheader("📊 All Statistical Features")
+    # Calculate percentages
+    recovery_rate = (cases[1] / cases[0]) * 100 if cases[0] > 0 else 0
+    death_rate = (cases[2] / cases[0]) * 100 if cases[0] > 0 else 0
+    active_rate = (cases[3] / cases[0]) * 100 if cases[0] > 0 else 0
 
-# 1️⃣ Frequency Distribution Table
-# Displaying the frequency distribution table of confirmed cases, recovered, deaths, and active cases.
-freq_table = pd.DataFrame({'Category': labels, 'Amount': cases})
-freq_table['Relative Frequency'] = freq_table['Amount'] / freq_table['Amount'].sum()
-st.table(freq_table)
+    st.write(f"✔️ **Recovery Rate:** {recovery_rate:.2f}%")
+    st.write(f"⚖️ **Death Rate:** {death_rate:.2f}%")
+    st.write(f"🏥 **Active Cases:** {active_rate:.2f}%")
+    st.write(f"🟡 **Suspect:** {st.session_state.suspect:,}")
+    st.write(f"🧪 **Specimens:** {st.session_state.specimen:,}")
 
-# 2️⃣ Midpoint
-# Displaying the midpoint values between each pair of category data.
-midpoints = [(cases[i] + cases[i+1]) / 2 for i in range(len(cases)-1)]
-st.write("Midpoints: ", midpoints)
-
-# 4️⃣ Cumulative Frequency
-# Displaying the cumulative frequency chart to see the development of cases over time.
-st.line_chart(np.cumsum(cases))
-
-# 5️⃣ Class Boundaries
-# Displaying class boundaries to divide data into specific groups.
-st.write("Class Boundaries: ", [(x-0.5, x+0.5) for x in cases])
-
-# 6️⃣ Histogram
-# Displaying a histogram to visualize the distribution of data within case categories.
-fig, ax = plt.subplots()
-ax.hist(cases, bins=4, color='blue', alpha=0.7)
-st.pyplot(fig)
-
-# 7️⃣ Polygon
-# Displaying a polygon chart to visualize the data progression in a smoother manner.
-fig, ax = plt.subplots()
-ax.plot(labels, cases, marker='o', linestyle='-', color='purple')
-st.pyplot(fig)
-
-# 9️⃣ Stem and Leaf Plot
-# Displaying a stem-and-leaf plot that groups data based on the first and second digits.
-stem = {str(x)[0]: str(x)[1:] for x in cases}
-st.write("Stem and Leaf Plot: ", stem)
-
-# 🔟 Dot Plot
-# Displaying a dot plot to show the relationship between categories and case amounts.
-fig, ax = plt.subplots()
-ax.scatter(labels, cases, color='red')
-st.pyplot(fig)
-
-# 1️⃣1️⃣ Pie Chart
-# Displaying a pie chart to show the proportional distribution of case amounts.
-fig, ax = plt.subplots()
-ax.pie(cases, labels=labels, autopct='%1.1f%%', startangle=140)
-st.pyplot(fig)
-
-# 1️⃣2️⃣ Pareto Chart
-# Displaying a Pareto chart that arranges categories based on the highest number of cases.
-sorted_cases = sorted(zip(labels, cases), key=lambda x: x[1], reverse=True)
-st.bar_chart(pd.DataFrame(sorted_cases, columns=['Category', 'Amount']))
-
-# 1️⃣3️⃣ Scatter Plot
-# Displaying a scatter plot to observe the relationship between category indices and case amounts.
-fig, ax = plt.subplots()
-ax.scatter(range(len(cases)), cases)
-st.pyplot(fig)
-
-# 1️⃣4️⃣ Time Series Chart
-# Displaying a time series chart to observe the development of cases over time.
-st.line_chart(cases)
-
-# 1️⃣5️⃣ Mean, Median, Mode
-# Displaying basic statistics: mean (average), median, and mode (most frequent value).
-st.write("Mean: ", np.mean(cases))
-st.write("Median: ", np.median(cases))
-st.write("Mode: ", pd.Series(cases).mode().tolist())
-
-# 1️⃣7️⃣ Standard Deviation & Variance
-# Displaying data spread metrics: standard deviation and variance.
-st.write("Standard Deviation: ", np.std(cases))
-st.write("Variance: ", np.var(cases))
-
-# 1️⃣8️⃣ Empirical Rule
-# Displaying the empirical rule stating the percentage of data within 1, 2, and 3 standard deviations.
-st.write("Empirical Rule: 68% of data falls within 1 std dev, 95% within 2 std devs, 99.7% within 3 std devs")
-
-# 2️⃣0️⃣ Quartiles
-# Displaying quartiles of the data and the interquartile range for distribution analysis.
-st.write("Quartiles: ", np.percentile(cases, [25, 50, 75]))
-st.write("Interquartile Range: ", np.percentile(cases, 75) - np.percentile(cases, 25))
-
-# 2️⃣1️⃣ Box and Whisker Plot
-# Displaying a box plot to show the data distribution and detect outliers.
-fig, ax = plt.subplots()
-ax.boxplot(cases, vert=False)
-st.pyplot(fig)
-
-# 2️⃣2️⃣ Percentiles and Deciles
-# Displaying the 90th percentile and deciles to get a deeper insight into data distribution.
-st.write("90th Percentile: ", np.percentile(cases, 90))
-st.write("Deciles: ", [np.percentile(cases, i * 10) for i in range(1, 10)])
-
-# 1️⃣1️⃣ COVID-19 Stats in Sidebar
-# Displaying key information about recovery rate, death rate, and active cases in the sidebar.
-recovery_rate = (cases[1] / cases[0]) * 100 if cases[0] > 0 else 0
-death_rate = (cases[2] / cases[0]) * 100 if cases[0] > 0 else 0
-active_rate = (cases[3] / cases[0]) * 100 if cases[0] > 0 else 0
-
-st.sidebar.write(f"🌎 Global Cases: {st.session_state.global_cases:,}")
-st.sidebar.write(f"✔️ Recovery Rate: {recovery_rate:.2f}%")
-st.sidebar.write(f"⚖️ Death Rate: {death_rate:.2f}%")
-st.sidebar.write(f"🏥 Active Cases: {active_rate:.2f}%")
-st.sidebar.write(f"🟡 Suspect: {st.session_state.suspect:,}")
-st.sidebar.write(f"🧪 Specimens: {st.session_state.specimen:,}")
-
-# 1️⃣2️⃣ Calculation Formulas
-# Displaying the calculation formulas for recovery rate, death rate, and active rate based on available data.
-st.subheader("📝 Calculation Formulas")
-st.markdown(f"""
-- **Recovery Rate** = `(Recovered / Total Cases) × 100%`
-  - {cases[1]} / {cases[0]} × 100% = **{recovery_rate:.2f}%**
-- **Death Rate** = `(Deaths / Total Cases) × 100%`
-  - {cases[2]} / {cases[0]} × 100% = **{death_rate:.2f}%**
-- **Active Rate** = `(Active Cases / Total Cases) × 100%`
-  - {cases[3]} / {cases[0]} × 100% = **{active_rate:.2f}%**
+# ------------------ MAIN CONTENT ------------------ #
+st.subheader("📊 Data Overview & Statistics")
+st.markdown("""
+**Data Source:** Indonesian Ministry of Health  
+**Data Categories:** Confirmed, Recovered, Deaths, Active Cases  
+If data retrieval fails, fallback data (as of June 21, 2023) will be used.
 """)
 
-# 1️⃣3️⃣ Cumulative Case Development Chart
-# Displaying the cumulative case development chart to show how confirmed, recovered, and death cases have evolved.
-st.subheader("📈 Cumulative Case Development Chart")
-fig, ax = plt.subplots()
-ax.plot(labels, cases, marker='o', linestyle='-', color='red', label='Confirmed')
-ax.plot(labels, [cases[1]]*4, marker='o', linestyle='-', color='green', label='Recovered')
-ax.legend()
-ax.set_ylabel("Case Count")
-st.pyplot(fig)
+# Frequency Distribution Table
+freq_table = pd.DataFrame({'Category': labels, 'Amount': cases})
+freq_table['Relative Frequency'] = freq_table['Amount'] / freq_table['Amount'].sum()
 
-# 1️⃣4️⃣ COVID-19 Bar Chart
-# Displaying a bar chart to represent the comparison of case numbers across each category.
-st.subheader("📊 COVID-19 Bar Chart")
-fig, ax = plt.subplots()
-ax.bar(labels, cases, color=['blue', 'green', 'red', 'orange'])
-ax.set_xlabel("Category")
-ax.set_ylabel("Case Count")
-st.pyplot(fig)
+freq_table_styled = freq_table.reset_index(drop=True).style.format({
+    "Amount": "{:,.0f}",
+    "Relative Frequency": "{:.2%}"
+})
 
-# 1️⃣ Frequency Distribution
-relative_frequency = freq_table['Amount'] / freq_table['Amount'].sum()
-freq_table['Relative Frequency'] = relative_frequency
-st.table(freq_table)
+st.markdown("#### Frequency Distribution Table")
+st.dataframe(freq_table_styled, use_container_width=True)
 
-# 2️⃣ Cumulative Frequency Table
-freq_table['Cumulative Frequency'] = np.cumsum(freq_table['Amount'])
-st.write("Cumulative Frequency Table:")
-st.table(freq_table)
+# Calculate midpoints
+midpoints = [(cases[i] + cases[i+1]) / 2 for i in range(len(cases) - 1)]
+st.write("**Midpoints between categories:**", midpoints)
 
-# 3️⃣ Frequency Histogram
-fig, ax = plt.subplots()
-ax.hist(cases, bins=4, color='blue', alpha=0.7)
-ax.set_title("Pure Frequency Histogram")
-st.pyplot(fig)
+# Tabs for Matplotlib, Plotly, and Statistical Analysis
+tab1, tab2, tab3 = st.tabs(["Matplotlib Charts", "Plotly Charts", "Statistical Analysis"])
 
-# 4️⃣ Relative Frequency Histogram
-fig, ax = plt.subplots()
-ax.hist(cases, bins=4, weights=relative_frequency, color='green', alpha=0.7)
-ax.set_title("Relative Frequency Histogram")
-st.pyplot(fig)
+with tab1:
+    st.markdown("#### Bar Chart (Matplotlib)")
+    fig, ax = plt.subplots()
+    ax.bar(labels, cases, color=['blue', 'green', 'red', 'orange'])
+    ax.set_ylabel("Number of Cases")
+    ax.set_title("COVID-19 Case Distribution")
+    st.pyplot(fig)
+    
+    st.markdown("#### Histogram (Matplotlib)")
+    fig, ax = plt.subplots()
+    ax.hist(cases, bins=4, color='blue', alpha=0.7)
+    ax.set_title("Case Histogram")
+    st.pyplot(fig)
 
-# 5️⃣ Distribution Shape (Symmetric, Uniform, Skewed Right, Skewed Left)
-mean = np.mean(cases)
-median = np.median(cases)
-std_dev = np.std(cases)
+with tab2:
+    st.markdown("#### Bar Chart (Plotly)")
+    fig = px.bar(
+        x=labels,
+        y=cases,
+        color=labels,
+        labels={'x': 'Category', 'y': 'Number of Cases'},
+        title="COVID-19 Case Distribution"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    
+    st.markdown("#### Pie Chart (Plotly)")
+    fig = px.pie(
+        values=cases,
+        names=labels,
+        title="Case Proportions"
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-# Using mean and median comparison to detect skewness
-if mean == median:
-    skewness = "Symmetric Distribution"
-elif mean < median:
-    skewness = "Left Skewed Distribution"
-else:
-    skewness = "Right Skewed Distribution"
+with tab3:
+    st.markdown("#### Cumulative Frequency")
+    cumulative = np.cumsum(cases)
+    st.line_chart(cumulative)
+    
+    st.markdown("#### Basic Statistics")
+    mean_val = np.mean(cases)
+    median_val = np.median(cases)
+    std_val = np.std(cases)
+    st.write(f"**Mean:** {mean_val:.2f}")
+    st.write(f"**Median:** {median_val:.2f}")
+    st.write(f"**Standard Deviation:** {std_val:.2f}")
+    
+    # Determine skewness
+    if mean_val == median_val:
+        skewness = "Symmetric Distribution"
+    elif mean_val < median_val:
+        skewness = "Left-Skewed Distribution"
+    else:
+        skewness = "Right-Skewed Distribution"
+    st.write(f"**Distribution Shape:** {skewness}")
+    
+    st.markdown("#### Chebyshev's Theorem")
+    for k in [1, 2, 3]:
+        percentage = (1 - 1/(k**2)) * 100
+        st.write(f"At least {percentage:.2f}% of data lies within {k} SD(s) of the mean.")
 
-st.write(f"Distribution Shape: {skewness}")
+# Calculation Formulas
+st.subheader("📝 Calculation Formulas")
+st.markdown(f"""
+- **Recovery Rate** = `(Recovered / Total Cases) × 100%`  
+  => {cases[1]} / {cases[0]} × 100% = **{recovery_rate:.2f}%**
+- **Death Rate** = `(Deaths / Total Cases) × 100%`  
+  => {cases[2]} / {cases[0]} × 100% = **{death_rate:.2f}%**
+- **Active Rate** = `(Active Cases / Total Cases) × 100%`  
+  => {cases[3]} / {cases[0]} × 100% = **{active_rate:.2f}%**
+""")
 
-# 6️⃣ Chebyshev's Theorem
-# Determining the percentage of data within 1, 2, and 3 standard deviations
-k_values = [1, 2, 3]
-chebyshev_results = {}
-for k in k_values:
-    lower_bound = mean - k * std_dev
-    upper_bound = mean + k * std_dev
-    chebyshev_results[k] = 1 - (1 / k**2)
+# Simple Time Series Analysis
+st.subheader("📈 Time Series Analysis (Simple Example)")
+st.line_chart(pd.Series(cases, index=labels))
 
-st.write("Chebyshev's Theorem - Percentage of Data within Distance from Mean:")
-for k, result in chebyshev_results.items():
-    st.write(f" - For k = {k}, percentage of data within {k} standard deviations: {result * 100:.2f}%")
-
-# 7️⃣ Time Series Analysis Chart
-# Since there is no time data, we can use the labels to represent "trend" based on current data.
-time_series_data = pd.Series(cases, index=labels)
-st.subheader("Time Series Analysis (Case Progression)")
-st.line_chart(time_series_data)
-
-# Load dataset
-file_path = "covid_19_indonesia_time_series_all.csv"
-
+# COVID-19 Data by Province (if file is available)
+st.subheader("📌 COVID-19 Data by Province")
 try:
-    df = pd.read_csv(file_path)
-
-    # Filter hanya provinsi di Indonesia
+    df = pd.read_csv("covid_19_indonesia_time_series_all.csv")
+    # Filter out national data
     df_provinces = df[(df["Location"] != "Indonesia") & (df["Location ISO Code"].str.startswith("ID-"))]
-
-    # Ambil data terbaru berdasarkan tanggal terakhir yang tersedia
     latest_date = df_provinces["Date"].max()
-    df_latest = df_provinces[df_provinces["Date"] == latest_date]
-
-    # Pilih kolom yang relevan
-    df_latest = df_latest[["Location", "Total Cases", "Total Recovered", "Total Deaths"]]
-
+    
+    # Select the latest data & relevant columns
+    df_latest = df_provinces[df_provinces["Date"] == latest_date][
+        ["Location", "Total Cases", "Total Recovered", "Total Deaths"]
+    ].copy()
+    
+    # Rename columns for clarity
     df_latest.rename(columns={
         "Location": "Province",
         "Total Cases": "Confirmed",
         "Total Recovered": "Recovered",
         "Total Deaths": "Deaths"
     }, inplace=True)
-
-    # Hitung Recovery & Death Rate
+    
+    # Calculate recovery & death rates per province
     df_latest["Recovery Rate"] = (df_latest["Recovered"] / df_latest["Confirmed"]) * 100
     df_latest["Death Rate"] = (df_latest["Deaths"] / df_latest["Confirmed"]) * 100
-
-    # Tampilkan DataFrame
-    st.write("## 📌 COVID-19 Data per Province (Latest Update)")
-    st.dataframe(df_latest)
-
-    # Tampilkan Recovery & Death Rate
-    st.write("## 🔬 Recovery & Death Rates")
-    st.dataframe(df_latest[["Province", "Recovery Rate", "Death Rate"]])
-
-    # Visualisasi Data
-    st.write("## 📊 Data Visualizations")
-
-    # 📊 Bar Chart
-    fig = px.bar(df_latest, x="Province", y="Confirmed", title="Confirmed Cases per Province", color="Confirmed")
-    st.plotly_chart(fig)
-
-    # 🥧 Pie Chart
-    fig = px.pie(df_latest, values="Confirmed", names="Province", title="Proportion of Cases per Province")
-    st.plotly_chart(fig)
-
-    # 📈 Line Chart
-    fig = px.line(df_latest, x="Province", y="Confirmed", title="COVID-19 Trend by Province")
-    st.plotly_chart(fig)
-
-    # 📉 Boxplot
-    fig = px.box(df_latest, y="Confirmed", title="Distribution of COVID-19 Cases")
-    st.plotly_chart(fig)
-
-    # Statistik Ringkasan
-    st.write("## 📊 Summary Statistics")
-    st.write(df_latest.describe())
+    
+    # Reset index to remove original DataFrame index
+    df_latest.reset_index(drop=True, inplace=True)
+    
+    # Format columns (thousand separators & percentages)
+    df_latest_styled = df_latest.style.format({
+        "Confirmed": "{:,.0f}",
+        "Recovered": "{:,.0f}",
+        "Deaths": "{:,.0f}",
+        "Recovery Rate": "{:.2f}%",
+        "Death Rate": "{:.2f}%"
+    })
+    
+    st.dataframe(df_latest_styled, use_container_width=True)
+    
+    st.markdown("#### Data Visualization by Province")
+    # Bar Chart
+    fig_bar = px.bar(
+        df_latest,
+        x="Province",
+        y="Confirmed",
+        title="Confirmed Cases by Province",
+        color="Confirmed"
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
+    
+    # Pie Chart
+    fig_pie = px.pie(
+        df_latest,
+        values="Confirmed",
+        names="Province",
+        title="Proportion of Cases by Province"
+    )
+    st.plotly_chart(fig_pie, use_container_width=True)
 
 except FileNotFoundError:
-    st.error("File tidak ditemukan. Pastikan file 'covid_19_indonesia_time_series_all.csv' tersedia di lokasi yang benar.")
+    st.error("File 'covid_19_indonesia_time_series_all.csv' not found. Please ensure the file is located correctly.")
